@@ -4,11 +4,16 @@ LC_ALL:=C
 LANG:=C
 export LC_ALL LANG
 
+export SHELL:=/usr/bin/env bash
+
+GLUONPATH ?= $(PATH)
+export GLUONPATH := $(GLUONPATH)
+
 empty:=
 space:= $(empty) $(empty)
 
-GLUONMAKE_EARLY = $(SUBMAKE) -C $(GLUON_ORIGOPENWRTDIR) -f $(GLUONDIR)/Makefile GLUON_TOOLS=0 QUILT=
-GLUONMAKE = $(SUBMAKE) -C $(GLUON_OPENWRTDIR) -f $(GLUONDIR)/Makefile
+GLUONMAKE_EARLY = PATH=$(GLUONPATH) $(SUBMAKE) -C $(GLUON_ORIGOPENWRTDIR) -f $(GLUONDIR)/Makefile GLUON_TOOLS=0 QUILT=
+GLUONMAKE = PATH=$(GLUONPATH) $(SUBMAKE) -C $(GLUON_OPENWRTDIR) -f $(GLUONDIR)/Makefile
 
 ifneq ($(OPENWRT_BUILD),1)
 
@@ -23,12 +28,6 @@ export TOPDIR
 update: FORCE
 	$(GLUONDIR)/scripts/update.sh
 	$(GLUONDIR)/scripts/patch.sh
-
-patch: FORCE
-	$(GLUONDIR)/scripts/patch.sh
-
-unpatch: FORCE
-	$(GLUONDIR)/scripts/unpatch.sh
 
 update-patches: FORCE
 	$(GLUONDIR)/scripts/update.sh
@@ -177,6 +176,9 @@ GLUON_$(1)_MODEL_$(2)_ALIASES += $(3)
 endef
 
 
+export SHA512SUM := $(GLUONDIR)/scripts/sha512sum.sh
+
+
 prereq: FORCE
 	+$(NO_TRACE_MAKE) prereq
 
@@ -209,7 +211,12 @@ gluon-tools: FORCE
 	+$(GLUONMAKE_EARLY) package/lua/host/install package/usign/host/install
 
 
-early_prepared_stamp := $(GLUON_BUILDDIR)/prepared
+
+early_prepared_stamp := $(GLUON_BUILDDIR)/prepared_$(shell \
+	( \
+		$(SHA512SUM) $(GLUONDIR)/modules; \
+		[ ! -r $(GLUON_SITEDIR)/modules ] || $(SHA512SUM) $(GLUON_SITEDIR)/modules \
+	) | $(SHA512SUM) )
 
 prepare-early: FORCE
 	for dir in build_dir dl staging_dir; do \
@@ -223,11 +230,12 @@ prepare-early: FORCE
 	touch $(early_prepared_stamp)
 
 $(early_prepared_stamp):
+	rm -f $(GLUON_BUILDDIR)/prepared_*
 	+$(GLUONMAKE_EARLY) prepare-early
 
 $(GLUON_OPKG_KEY): $(early_prepared_stamp) FORCE
 	[ -s $(GLUON_OPKG_KEY) -a -s $(GLUON_OPKG_KEY).pub ] || \
-		mkdir -p $$(dirname $(GLUON_OPKG_KEY)) && $(STAGING_DIR_HOST)/bin/usign -G -s $(GLUON_OPKG_KEY) -p $(GLUON_OPKG_KEY).pub -c "Gluon opkg key"
+		( mkdir -p $$(dirname $(GLUON_OPKG_KEY)) && $(STAGING_DIR_HOST)/bin/usign -G -s $(GLUON_OPKG_KEY) -p $(GLUON_OPKG_KEY).pub -c "Gluon opkg key" )
 
 $(GLUON_OPKG_KEY).pub: $(GLUON_OPKG_KEY)
 
@@ -253,8 +261,9 @@ MODULE_PREFIX = gluon-$(GLUON_SITE_CODE)-$(PREPARED_RELEASE)
 include $(INCLUDE_DIR)/target.mk
 
 build-key: FORCE
-	ln -sf $(GLUON_OPKG_KEY) $(BUILD_KEY)
-	ln -sf $(GLUON_OPKG_KEY).pub $(BUILD_KEY).pub
+	rm -f $(BUILD_KEY) $(BUILD_KEY).pub
+	cp $(GLUON_OPKG_KEY) $(BUILD_KEY)
+	cp $(GLUON_OPKG_KEY).pub $(BUILD_KEY).pub
 
 config: FORCE
 	+$(NO_TRACE_MAKE) scripts/config/conf OPENWRT_BUILD= QUIET=0
@@ -304,9 +313,6 @@ clean: FORCE
 	rm -f $(gluon_prepared_stamp)
 
 
-export SHA512SUM := $(GLUONDIR)/scripts/sha512sum.sh
-
-
 download: FORCE
 	+$(SUBMAKE) tools/download
 	+$(SUBMAKE) toolchain/download
@@ -331,7 +337,7 @@ prepare-image: FORCE
 	+$(SUBMAKE) -C $(TOPDIR)/target/linux/$(BOARD)/image image_prepare KDIR="$(BOARD_KDIR)"
 
 prepare: FORCE
-	@$(STAGING_DIR_HOST)/bin/lua $(GLUONDIR)/package/gluon-core/files/usr/lib/lua/gluon/site_config.lua \
+	@$(STAGING_DIR_HOST)/bin/lua $(GLUONDIR)/scripts/site_config.lua \
 		|| (echo 'Your site configuration did not pass validation.'; false)
 
 	mkdir -p $(GLUON_IMAGEDIR) $(BOARD_BUILDDIR)
